@@ -1,0 +1,44 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.health import router as health_router
+from app.api.auth import router as auth_router
+from app.api.evaluations import router as evaluations_router
+from app.api.applications import router as applications_router
+from app.api.jobs import router as jobs_router
+from app.api.matches import router as matches_router
+from app.api.rankings import router as rankings_router
+from app.api.recommendations import router as recommendations_router
+from app.api.skill_gaps import router as skill_gaps_router
+from app.api.workflows import router as workflows_router
+from app.api.resumes import router as resumes_router
+from app.core.config import get_settings
+
+settings = get_settings()
+
+app = FastAPI(
+    title=settings.app_name,
+    version="0.1.0",
+    description="API for explainable AI-assisted resume screening.",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.frontend_origin],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1):\d+",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(health_router, prefix="/api/v1")
+app.include_router(auth_router, prefix="/api/v1")
+app.include_router(evaluations_router, prefix="/api/v1")
+app.include_router(applications_router, prefix="/api/v1")
+app.include_router(jobs_router, prefix="/api/v1")
+app.include_router(matches_router, prefix="/api/v1")
+app.include_router(rankings_router, prefix="/api/v1")
+app.include_router(skill_gaps_router, prefix="/api/v1")
+app.include_router(recommendations_router, prefix="/api/v1")
+app.include_router(workflows_router, prefix="/api/v1")
+app.include_router(resumes_router, prefix="/api/v1")
