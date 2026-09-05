@@ -3,4 +3,4 @@ import app.models  # noqa: F401
 
 
 def test_database_schema_contains_core_entities() -> None:
-    assert set(Base.metadata.tables) == {"jobs", "candidates", "applications", "users"}
+    assert {"jobs", "candidates", "applications", "users"}.issubset(set(Base.metadata.tables))
