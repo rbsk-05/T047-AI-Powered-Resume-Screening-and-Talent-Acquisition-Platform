@@ -1,98 +1,197 @@
-# TalentLens AI
+# TalentLens AI - AI-Powered Resume Screening and Talent Acquisition Platform
 
-An explainable, AI-assisted resume-screening platform. Development begins with a small, testable foundation and then adds each analysis module in order.
+An explainable, AI-assisted resume-screening platform built with FastAPI, PyTorch / SentenceTransformers, PostgreSQL, and React.
 
-## Phase 0 status
+---
 
-- FastAPI backend with a health endpoint
-- React + Vite frontend that verifies the API connection
-- Environment-based PostgreSQL configuration
-- Local development configuration without Docker
+## Architecture & Project Structure
 
-## Run locally
+The project is modularized into distinct ownership areas to maintain clean separation of concerns:
 
-### Backend
+```text
+backend/
+└── app/
+    ├── api/                  # FastAPI router endpoints
+    │   ├── applications.py
+    │   ├── auth.py
+    │   ├── evaluations.py
+    │   ├── jobs.py
+    │   ├── matches.py
+    │   ├── rankings.py
+    │   ├── recommendations.py
+    │   ├── resumes.py
+    │   ├── skill_gaps.py
+    │   └── workflows.py
+    │
+    ├── matching/             # [AI/ML Owner] Semantic matching & 6-component scoring
+    │   ├── embeddings.py     # SentenceTransformer embeddings & fallback provider
+    │   ├── matcher.py        # CandidateMatcher service
+    │   └── scorer.py        # Transparent component scoring logic
+    │
+    ├── ranking/              # [AI/ML Owner] Candidate ranking & multi-candidate comparison
+    │   └── ranker.py         # RankingService & Comparison matrix
+    │
+    ├── skill_gap/            # [AI/ML Owner] Critical vs Important skill gap analysis
+    │   └── analyzer.py       # SkillGapAnalyzer
+    │
+    ├── recommendations/      # [AI/ML Owner] Targeted upskilling roadmaps
+    │   └── recommender.py    # LearningRecommendationService
+    │
+    ├── explanation/          # [AI/ML Owner] Explainable AI & evidence generation
+    │   └── explainer.py      # EvaluationService / ExplainableAI
+    │
+    ├── workflows/            # [AI/ML Owner] End-to-end pipeline orchestration
+    │   └── candidate_analysis.py  # CandidateAnalysisWorkflow
+    │
+    ├── services/             # Backwards-compatibility bridge (re-exports AI modules)
+    ├── core/                 # App configuration & settings
+    ├── db/                   # Database session & models
+    └── main.py               # FastAPI application entry point
+```
 
+> **Note on Compatibility**: The files under `backend/app/services/` (`matching.py`, `ranking.py`, `skill_gap.py`, `recommendations.py`, `evaluation.py`, `workflow.py`) serve as a compatibility forwarding layer re-exporting classes from the feature owner folders (`app/matching/`, `app/ranking/`, etc.). The feature subdirectories are the primary logic owners.
+
+---
+
+## Data Flow & Processing Pipeline
+
+```text
+Resume PDF / Document
+    ↓
+Resume Parser
+    ↓
+CandidateProfile
+                     ┐
+                     │
+                     ▼
+                AI Candidate
+                Analysis Layer
+                     ▲
+                     │
+                     ┘
+Job Description Text
+    ↓
+JD Parser / Analyzer
+    ↓
+JobProfile
+
+CandidateProfile + JobProfile
+    ↓
+Matching (CandidateMatcher)
+    ↓
+Ranking (RankingService)
+    ↓
+Skill Gap Analysis (SkillGapAnalyzer)
+    ↓
+Learning Recommendations (LearningRecommendationService)
+    ↓
+Explainability (EvaluationService)
+    ↓
+Final Candidate Analysis Workflow
+```
+
+The AI Candidate Analysis Layer consumes standardized `CandidateProfile` and `JobProfile` schemas as inputs and produces stable JSON output contracts (`MatchResult`, `RankingResult`, `SkillGapResult`, `RecommendationResult`, `CandidateEvaluation`, `CandidateWorkflowResult`).
+
+---
+
+## Current Development Status
+
+### Completed
+- [x] Authentication & Authorization (JWT + bcrypt)
+- [x] Resume upload endpoint & storage integration
+- [x] **AI/ML Candidate Analysis Layer**
+- [x] Candidate–Job semantic matching & 6-component scoring (Required Skills, Experience, Education, Projects, Semantic Similarity, Certifications)
+- [x] Vector embeddings via SentenceTransformer (`all-MiniLM-L6-v2`) with automatic lexical fallback
+- [x] Deterministic multi-candidate ranking & comparison matrix
+- [x] Skill gap categorization (`critical` required gaps vs `important` preferred gaps)
+- [x] Personalized learning & upskilling recommendations
+- [x] Explainable AI output (recruiter summaries, positive factors, skill gaps, itemized evidence table)
+- [x] End-to-end candidate analysis workflow orchestration
+- [x] **Automated Test Suite**: **58/58 tests passing**
+
+### In Progress
+- [ ] Resume parser / information extraction refinements
+- [ ] Job description parser / analyzer refinements
+- [ ] Recruiter & Candidate frontend UI integration
+- [ ] End-to-end system integration with real-world resumes & JDs
+
+### Next Integration Milestone
+
+The Resume Parser and JD Parser will be finalized to produce standardized `CandidateProfile` and `JobProfile` objects.
+
+```text
+Real Resume PDF + Real Job Description
+                 ↓
+        Production Extraction
+                 ↓
+    CandidateProfile + JobProfile
+                 ↓
+    AI Candidate Analysis Layer
+                 ↓
+Ranking + Skill Gaps + Recommendations + Explanation
+```
+
+---
+
+## Known Current Limitations (Upstream Parser Work)
+
+Real-data validation tests confirmed that the AI/ML Analysis Layer operates correctly (100% mathematical, scoring, and workflow accuracy). However, real-world end-to-end accuracy depends on upstream extraction quality:
+
+### Resume Parser (Upstream Tracker)
+- **Name Extraction**: Improve header parsing when contact details are formatted inline.
+- **Phone Extraction**: Improve regex matching for international formats (e.g. `+91...`).
+- **Experience Duration**: Add date range calculation (e.g. `"MAR 2026 - OCT 2026"`) in addition to explicit `"X years of experience"` text strings.
+- **Skill Normalization**: Expand skill taxonomy matching for unpunctuated variants (`NodeJS` / `Node.js`, `ExpressJS` / `Express.js`, `ReactNative` / `React Native`).
+- **Section Boundaries**: Ensure certification parsing cleanly stops at adjacent headers such as `VOLUNTEERING`.
+
+### JD Parser (Upstream Tracker)
+- **Section Priority**: Enhance sentence splitting to distinguish required vs preferred skill sections reliably when headings like `PREFERRED SKILLS` are used.
+- **Responsibilities Extraction**: Parse bullet-pointed responsibility statements even when ending punctuation (`.!?`) is omitted.
+
+---
+
+## Ownership & Development Boundaries
+
+```text
+Resume Parser Module  → Person 2 (Resume / Extraction owner)
+JD Parser / Analyzer  → Job / JD Analysis owner
+AI/ML Analysis Layer  → AI/ML owner (Primary Ownership)
+Recruiter Frontend    → Person 3 (Recruiter UI owner)
+Candidate Frontend    → Person 4 (Candidate UI owner)
+```
+
+---
+
+## API Endpoints Summary
+
+| Endpoint | Method | Description |
+| :--- | :---: | :--- |
+| `/api/v1/jobs/analyze` | `POST` | Extract structured `JobProfile` from JD text |
+| `/api/v1/resumes/parse` | `POST` | Parse uploaded PDF/DOCX resume into `CandidateProfile` |
+| `/api/v1/matches/score` | `POST` | Calculate overall match score and 6-component breakdown |
+| `/api/v1/evaluations/explain` | `POST` | Generate recruiter summary, strengths, gaps, and evidence table |
+| `/api/v1/rankings/rank` | `POST` | Rank multiple candidate profiles for a target job |
+| `/api/v1/rankings/compare` | `POST` | Generate side-by-side candidate comparison matrix |
+| `/api/v1/skill-gaps/analyze` | `POST` | Classify missing skills into critical and important gaps |
+| `/api/v1/recommendations/generate` | `POST` | Generate targeted upskilling learning roadmaps |
+| `/api/v1/workflows/candidate-analysis` | `POST` | Execute full candidate analysis workflow end-to-end |
+
+---
+
+## Run Locally
+
+### Backend Setup
 ```powershell
 cd backend
-py -3 -m venv .venv
+python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```
 
-Set `DATABASE_URL` in `backend/.env` after PostgreSQL is installed and a database has been created. The health endpoint does not depend on the database yet.
-
-### Frontend
-
+### Run Tests
 ```powershell
-cd frontend
-npm install
-npm run dev
-```
-
-Open the address Vite displays (normally `http://localhost:5173`).
-
-## First API endpoint
-
-`GET http://localhost:8000/api/v1/health`
-
-## Module 1: Job Description Analysis
-
-`POST http://localhost:8000/api/v1/jobs/analyze`
-
-```json
-{
-  "job_title": "Backend Developer",
-  "job_description": "Develop REST API services using Python and FastAPI. Candidates need 3+ years of experience. Docker is preferred."
-}
-```
-
-Always computes a transparent rule-based baseline first. If `ENABLE_LLM_EXTRACTION=true` and `ANTHROPIC_API_KEY` is set, an LLM extraction pass runs on top and its output is used **field by field**, only where it's validly typed — any missing/malformed field, or any LLM failure, silently keeps the baseline value. The response shape never changes.
-
-## Module 2: Resume Parsing
-
-`POST http://localhost:8000/api/v1/resumes/parse`
-
-Upload a PDF or DOCX resume as the `file` form field. The endpoint accepts files up to 10 MB and returns a structured candidate profile.
-
-## Module 3: Candidate Matching and ATS Score
-
-`POST http://localhost:8000/api/v1/matches/score`
-
-Send a structured `job_profile` and `candidate_profile` to receive an overall ATS-style score, the six weighted component scores, and matched/missing skills. The scoring weights and logic are fully deterministic and auditable. The `semantic_similarity` component uses Sentence Transformers embeddings (`EMBEDDING_MODEL_NAME`, default `all-MiniLM-L6-v2`) when available, and automatically falls back to lexical (Jaccard) token overlap if the model can't be loaded — e.g. no internet access to fetch weights, or `ENABLE_EMBEDDINGS=false`.
-
-## Module 4: Explainable Candidate Evaluation
-
-`POST http://localhost:8000/api/v1/evaluations/explain`
-
-Send the same matching input under `match_request`. The response adds a recruiter-facing summary, recommendation, strengths, gaps, and requirement-by-requirement evidence. The recommendation, strengths, gaps, and evidence are always computed deterministically from the match result. Only the free-text `summary` is optionally phrased by an LLM when `ENABLE_LLM_EXTRACTION=true` — the LLM is given the already-computed score and skill lists as ground truth and asked only to phrase them, not judge fit itself; any failure falls back to the templated summary.
-
-## AI layer configuration
-
-See `backend/.env.example` for `ENABLE_EMBEDDINGS`, `EMBEDDING_MODEL_NAME`, `ENABLE_LLM_EXTRACTION`, `ANTHROPIC_API_KEY`, and `LLM_MODEL`. Both the embedding provider and the LLM provider are designed to degrade to the deterministic baseline on any failure, so the API never breaks because a model or API key is unavailable.
-
-## Module 5: Candidate Ranking and Comparison
-
-`POST http://localhost:8000/api/v1/rankings/rank` ranks 2–200 candidate profiles for one job. `POST http://localhost:8000/api/v1/rankings/compare` returns their respective strengths and gaps for side-by-side presentation.
-
-## Module 6: Skill Gap Analysis
-
-`POST http://localhost:8000/api/v1/skill-gaps/analyze` classifies missing required skills as `critical` and missing preferred skills as `important`.
-
-## Module 7: Personalized Skill Recommendations
-
-`POST http://localhost:8000/api/v1/recommendations/generate` converts a skill-gap result into prioritized learning paths.
-
-## Analysis Orchestration
-
-`POST http://localhost:8000/api/v1/workflows/candidate-analysis` coordinates matching, explanation, skill-gap analysis, and learning recommendations for one structured job and candidate profile.
-
-## PostgreSQL persistence
-
-The backend now includes database models for `jobs`, `candidates`, and `applications`. Once local PostgreSQL is installed and `DATABASE_URL` is set in `backend/.env`, create the initial tables with:
-
-```powershell
-.venv\Scripts\python.exe -m app.db.initialize
+cd backend
+.\.venv\Scripts\python.exe -m pytest -v
 ```

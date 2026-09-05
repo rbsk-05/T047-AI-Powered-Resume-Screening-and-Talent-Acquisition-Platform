@@ -20,9 +20,9 @@ JobDescriptionAnalysisRequest = JobCreateRequest
 
 class JobProfile(BaseModel):
     """AI-extracted structured profile from a job description."""
-    job_title: str
-    required_skills: list[str]
-    preferred_skills: list[str]
-    experience: str | None
-    education: list[str]
-    responsibilities: list[str]
+    job_title: str = ""
+    required_skills: list[str] = Field(default_factory=list)
+    preferred_skills: list[str] = Field(default_factory=list)
+    experience: str | None = None
+    education: list[str] = Field(default_factory=list)
+    responsibilities: list[str] = Field(default_factory=list)
