@@ -85,22 +85,34 @@ Respond with ONLY a JSON object (no prose, no markdown fences) with exactly thes
         return data
 
     def extract_candidate_profile(self, resume_text: str) -> dict | None:
-        """Ask the LLM to extract structured candidate profile from resume text."""
+        """Ask the LLM to extract a structured candidate profile from resume text.
+
+        ``experience`` is returned as a list of objects so that it maps
+        directly to the ``ExperienceEntry`` Pydantic model consumed by
+        ``ResumeParser._parse_llm_experience``.
+        """
         prompt = f"""Extract structured candidate information from this resume text.
-If the text does NOT look like a resume or CV, or has no relevant technical candidate information, return empty lists/null.
+If the text does NOT look like a resume or CV, return empty lists/null for all fields.
 
 Resume Text:
 {resume_text[:4000]}
 
 Respond with ONLY a JSON object (no prose, no markdown fences) with exactly these keys:
-- "name": string or null
+- "name": string or null — candidate's full name
 - "email": string or null
 - "phone": string or null
-- "skills": list of strings (e.g. ["Python", "FastAPI", "Docker", "SQL"])
-- "experience": string or null (e.g. "3 years", "2.5 years")
-- "education": list of strings (e.g. ["B.Tech in Computer Science"])
-- "projects": list of strings (e.g. ["Built an e-commerce platform using React and Node.js"])
-- "certifications": list of strings (e.g. ["AWS Certified Solutions Architect"])
+- "linkedin": string or null — full LinkedIn profile URL if present
+- "github": string or null — full GitHub profile URL if present
+- "summary": string or null — candidate's own summary/objective paragraph
+- "skills": list of strings — recognised technical skills, e.g. ["Python", "FastAPI", "Docker"]
+- "experience": list of objects — each object has keys:
+    "company" (string or null), "title" (string or null),
+    "duration" (string or null, e.g. "Jan 2021 – Dec 2022"),
+    "description" (string or null, one-line summary of the role)
+  Example: [{{"company": "Google", "title": "SWE", "duration": "2020-2023", "description": null}}]
+- "education": list of strings, e.g. ["B.Tech in Computer Science, IIT Delhi"]
+- "projects": list of strings, e.g. ["E-commerce platform using React and Node.js"]
+- "certifications": list of strings, e.g. ["AWS Certified Solutions Architect"]
 """
         raw = self._complete(prompt)
         if raw is None:
@@ -109,7 +121,10 @@ Respond with ONLY a JSON object (no prose, no markdown fences) with exactly thes
             data = json.loads(raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```"))
         except json.JSONDecodeError:
             return None
-        expected_keys = {"name", "email", "phone", "skills", "experience", "education", "projects", "certifications"}
+        expected_keys = {
+            "name", "email", "phone", "linkedin", "github", "summary",
+            "skills", "experience", "education", "projects", "certifications",
+        }
         if not isinstance(data, dict) or not expected_keys.issubset(data.keys()):
             return None
         return data
