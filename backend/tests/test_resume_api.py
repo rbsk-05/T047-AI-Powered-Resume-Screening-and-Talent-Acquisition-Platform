@@ -106,7 +106,7 @@ class TestParseEndpoint:
         data = response.json()
         assert data["email"] == "john@example.com"
         assert isinstance(data["skills"], list)
-        assert isinstance(data["experience"], list)
+        assert isinstance(data["experience_entries"], list)
         # candidate_id should be null for ephemeral parse
         assert data["candidate_id"] is None
 

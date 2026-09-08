@@ -282,10 +282,11 @@ class TestParseText:
 
     def test_experience_is_list(self, parser: ResumeParser) -> None:
         profile = parser.parse_text(FULL_RESUME_TEXT)
-        assert isinstance(profile.experience, list)
+        assert isinstance(profile.experience_entries, list)
+        assert isinstance(profile.experience, str)
         # At least one entry should be found
-        assert len(profile.experience) >= 1
-        for entry in profile.experience:
+        assert len(profile.experience_entries) >= 1
+        for entry in profile.experience_entries:
             assert isinstance(entry, ExperienceEntry)
 
     def test_education_extracted(self, parser: ResumeParser) -> None:
@@ -366,7 +367,7 @@ class TestExtractText:
         profile = parser.parse("resume.docx", sample_docx_bytes)
         assert profile.email == "john@example.com"
         assert "Python" in profile.skills
-        assert isinstance(profile.experience, list)
+        assert isinstance(profile.experience_entries, list)
 
 
 # ---------------------------------------------------------------------------
@@ -413,12 +414,12 @@ class TestLLMMerge:
                 "github": None,
                 "summary": None,
                 "skills": [],
-                "experience": [
+                "work_experience": [
                     {
                         "company": "Acme Corp",
-                        "title": "Senior Engineer",
-                        "duration": "2020-2023",
-                        "description": "Led backend team",
+                        "role": "Senior Engineer",
+                        "duration_text": "2020-2023",
+                        "description": ["Led backend team"],
                     }
                 ],
                 "education": [],
@@ -427,8 +428,8 @@ class TestLLMMerge:
             }
         )
         profile = p.parse_text(FULL_RESUME_TEXT)
-        assert len(profile.experience) >= 1
-        assert any(e.company == "Acme Corp" for e in profile.experience)
+        assert len(profile.experience_entries) >= 1
+        assert any(e.company == "Acme Corp" for e in profile.experience_entries)
 
     def test_llm_failure_returns_baseline(self) -> None:
         p = self._make_parser_with_llm(None)
@@ -454,4 +455,4 @@ class TestLLMMerge:
             }
         )
         profile = p.parse_text(FULL_RESUME_TEXT)
-        assert isinstance(profile.experience, list)
+        assert isinstance(profile.experience_entries, list)
