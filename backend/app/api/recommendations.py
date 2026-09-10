@@ -1,13 +1,13 @@
 from fastapi import APIRouter
 
+from app.agents.recommendation_agent import RecommendationAgent
 from app.schemas.recommendation import RecommendationRequest, RecommendationResult
-from app.services.recommendations import LearningRecommendationService
 
 router = APIRouter(prefix="/recommendations", tags=["skill recommendations"])
-service = LearningRecommendationService()
+agent = RecommendationAgent()
 
 
 @router.post("/generate", response_model=RecommendationResult)
 def generate_recommendations(payload: RecommendationRequest) -> RecommendationResult:
     """Generate personalized learning paths from an analyzed skill gap."""
-    return service.generate(payload)
+    return agent.process(payload.skill_gap)

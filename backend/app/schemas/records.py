@@ -38,6 +38,10 @@ class ApplicationCreate(BaseModel):
     candidate_id: UUID
 
 
+from app.schemas.gap import SkillGapResult
+from app.schemas.recommendation import RecommendationResult
+
+
 class StoredApplication(BaseModel):
     id: UUID
     job_id: UUID
@@ -46,7 +50,13 @@ class StoredApplication(BaseModel):
     match: MatchResult
     evaluation: CandidateEvaluation
     created_at: datetime
-    # Added for UI display
+    # Added for UI display & candidate feedback
     job_title: str | None = None
     company_name: str | None = None
+    candidate_name: str | None = None
+    candidate_profile: CandidateProfile | None = None
+    skill_gap: SkillGapResult | None = None
+    recommendations: RecommendationResult | None = None
+
+
 

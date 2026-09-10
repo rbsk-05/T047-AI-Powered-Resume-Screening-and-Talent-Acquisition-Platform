@@ -1,26 +1,58 @@
-import { useEffect, useState } from "react";
-import { API_URL, MatchResult, StoredApplication, StoredJob } from "../api";
+import React, { useEffect, useState } from "react";
+import {
+  ArrowLeft,
+  Users,
+  Sparkles,
+  GitCompare,
+  CheckCircle2,
+  XCircle,
+  Eye,
+  Clock,
+  Filter,
+  SlidersHorizontal,
+} from "lucide-react";
+import { API_URL, compareApplications, CompareResponse, StoredApplication, StoredJob } from "../api";
 import { useAuth } from "../auth/AuthContext";
-import { ChipGroup } from "./ChipGroup";
+import { Card } from "./ui/Card";
+import { Button } from "./ui/Button";
+import { Badge } from "./ui/Badge";
+import { StatusBadge } from "./ui/StatusBadge";
+import { ProgressRing } from "./ui/ProgressRing";
+import { SkillChip } from "./ui/SkillChip";
+import { EmptyState } from "./ui/EmptyState";
+import { LoadingState } from "./ui/LoadingState";
+import { PageHeader } from "./ui/PageHeader";
+import { CandidateEvaluationModal } from "./recruiter/CandidateEvaluationModal";
+import { CandidateCompareModal } from "./CandidateCompareModal";
 
-type JobApplicationsViewProps = {
+interface JobApplicationsViewProps {
   job: StoredJob;
   onBack: () => void;
-};
+}
 
-export function JobApplicationsView({ job, onBack }: JobApplicationsViewProps) {
+export const JobApplicationsView: React.FC<JobApplicationsViewProps> = ({ job, onBack }) => {
   const { token } = useAuth();
   const [applications, setApplications] = useState<StoredApplication[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedApp, setSelectedApp] = useState<StoredApplication | null>(null);
+  const [inspectApp, setInspectApp] = useState<StoredApplication | null>(null);
+
+  // Filter state
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [minScoreFilter, setMinScoreFilter] = useState(0);
+
+  // Comparison state
+  const [selectedForCompare, setSelectedForCompare] = useState<string[]>([]);
+  const [compareData, setCompareData] = useState<CompareResponse | null>(null);
+  const [isComparing, setIsComparing] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
     setIsLoading(true);
     fetch(`${API_URL}/applications/job/${job.id}`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
     })
-      .then(res => res.json())
+      .then((res) => (res.ok ? res.json() : []))
       .then(setApplications)
       .catch(console.error)
       .finally(() => setIsLoading(false));
@@ -32,150 +64,270 @@ export function JobApplicationsView({ job, onBack }: JobApplicationsViewProps) {
       await fetch(`${API_URL}/applications/${appId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status })
+        body: JSON.stringify({ status }),
       });
       // Update local state
-      setApplications(apps => apps.map(app => app.id === appId ? { ...app, status } : app));
-      if (selectedApp && selectedApp.id === appId) {
-        setSelectedApp({ ...selectedApp, status });
+      setApplications((apps) =>
+        apps.map((app) => (app.id === appId ? { ...app, status } : app))
+      );
+      if (inspectApp && inspectApp.id === appId) {
+        setInspectApp({ ...inspectApp, status });
       }
     } catch (err) {
       console.error("Failed to update status", err);
     }
   }
 
-  if (selectedApp) {
-    const match = selectedApp.match;
-    const scoreColor = match.overall_match_score >= 80 ? "var(--color-success)" : match.overall_match_score >= 60 ? "var(--color-warning)" : "var(--color-danger)";
-
-    return (
-      <div className="panel">
-        <button className="ghost-button" onClick={() => setSelectedApp(null)} style={{ marginBottom: "1rem" }}>
-          ← Back to Applicants
-        </button>
-        
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem" }}>
-          <div>
-            <h2>{selectedApp.company_name /* Candidate name hack */}</h2>
-            <p className="eyebrow" style={{ fontSize: "1rem" }}>Applied for {job.title}</p>
-            <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem" }}>
-               <button 
-                 onClick={() => updateStatus(selectedApp.id, "shortlisted")} 
-                 disabled={selectedApp.status === "shortlisted"}
-                 className={selectedApp.status === "shortlisted" ? "secondary-button" : ""}
-               >
-                 Shortlist
-               </button>
-               <button 
-                 onClick={() => updateStatus(selectedApp.id, "rejected")} 
-                 disabled={selectedApp.status === "rejected"}
-                 className={selectedApp.status === "rejected" ? "secondary-button" : ""}
-               >
-                 Reject
-               </button>
-               <button 
-                 onClick={() => updateStatus(selectedApp.id, "hired")} 
-                 disabled={selectedApp.status === "hired"}
-                 style={{ background: "var(--color-success)", color: "white" }}
-               >
-                 Hire
-               </button>
-            </div>
-          </div>
-          
-          <div style={{ textAlign: "center", padding: "1rem", background: "var(--color-bg)", borderRadius: "8px", border: `2px solid ${scoreColor}` }}>
-            <div style={{ fontSize: "2rem", fontWeight: "bold", color: scoreColor }}>
-              {match.overall_match_score}%
-            </div>
-            <div style={{ fontSize: "0.75rem", color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: "1px" }}>
-              ATS Score
-            </div>
-          </div>
-        </div>
-
-        <div style={{ marginBottom: "2rem" }}>
-          <h3>AI Evaluation Summary</h3>
-          <p style={{ marginTop: "0.5rem", lineHeight: 1.6 }}>{selectedApp.evaluation.summary}</p>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem", marginBottom: "2rem" }}>
-          <div style={{ background: "var(--color-bg)", padding: "1.5rem", borderRadius: "8px" }}>
-            <h3 style={{ color: "var(--color-success)", marginBottom: "1rem" }}>Strengths (Matched)</h3>
-            <ul style={{ paddingLeft: "1.5rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-              {selectedApp.evaluation.strengths.map((s, i) => (
-                <li key={i}>{s}</li>
-              ))}
-            </ul>
-          </div>
-          
-          <div style={{ background: "var(--color-bg)", padding: "1.5rem", borderRadius: "8px" }}>
-            <h3 style={{ color: "var(--color-warning)", marginBottom: "1rem" }}>Skill Gaps (Missing)</h3>
-            <ul style={{ paddingLeft: "1.5rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-              {selectedApp.evaluation.gaps.map((g, i) => (
-                <li key={i}>{g}</li>
-              ))}
-            </ul>
-          </div>
-        </div>
-
-        <div style={{ background: "var(--color-primary-light)", padding: "1.5rem", borderRadius: "8px", borderLeft: "4px solid var(--color-primary)" }}>
-          <h3>Recommendation & Learning Path</h3>
-          <p style={{ marginTop: "0.5rem", lineHeight: 1.6 }}>{selectedApp.evaluation.recommendation}</p>
-        </div>
-      </div>
+  function toggleCandidateSelection(appId: string) {
+    setSelectedForCompare((prev) =>
+      prev.includes(appId) ? prev.filter((id) => id !== appId) : [...prev, appId]
     );
   }
 
+  async function handleCompare() {
+    if (!token || selectedForCompare.length < 2) return;
+    setIsComparing(true);
+    setCompareError(null);
+    try {
+      const res = await compareApplications(token, selectedForCompare);
+      setCompareData(res);
+    } catch (err) {
+      setCompareError(err instanceof Error ? err.message : "Failed to compare candidates");
+    } finally {
+      setIsComparing(false);
+    }
+  }
+
+  if (isLoading) {
+    return <LoadingState message="Loading and ranking candidate pool..." rows={4} />;
+  }
+
+  // Sort candidates by match score descending (Ranking logic)
+  const rankedApps = [...applications].sort(
+    (a, b) => (b.match?.overall_match_score || 0) - (a.match?.overall_match_score || 0)
+  );
+
+  const filteredApps = rankedApps.filter((app) => {
+    const score = app.match?.overall_match_score || 0;
+    if (score < minScoreFilter) return false;
+
+    if (statusFilter === "all") return true;
+    return (app.status || "").toUpperCase() === statusFilter.toUpperCase();
+  });
+
   return (
-    <div className="panel">
-      <button className="ghost-button" onClick={onBack} style={{ marginBottom: "1rem" }}>
-        ← Back to Jobs
-      </button>
-      <h2>Applicants for {job.title}</h2>
-      <p className="intro">Candidates are ranked by their AI match score.</p>
-      
-      {isLoading ? (
-        <p>Loading applicants...</p>
-      ) : applications.length === 0 ? (
-        <div className="empty-state">
-          <p>No one has applied to this job yet.</p>
+    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      {/* Top Breadcrumb Header */}
+      <div>
+        <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={onBack}>
+          Back to Jobs List
+        </Button>
+      </div>
+
+      <PageHeader
+        title={`Applicants: ${job.title}`}
+        subtitle={`Screened and ranked candidate pool for ${job.company_name || "Enterprise Company"}`}
+        action={
+          selectedForCompare.length >= 2 ? (
+            <Button
+              variant="ai"
+              icon={GitCompare}
+              loading={isComparing}
+              onClick={handleCompare}
+            >
+              Compare Selected ({selectedForCompare.length})
+            </Button>
+          ) : (
+            <Badge variant="neutral" size="md">
+              Select 2+ candidates to compare
+            </Badge>
+          )
+        }
+      />
+
+      {/* Filter and Score Slider Bar */}
+      <Card style={{ padding: "14px 20px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
+          {/* Status Tabs */}
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+            {[
+              { id: "all", label: `All (${applications.length})` },
+              { id: "applied", label: `Applied (${applications.filter((a) => (a.status || "").toUpperCase() === "APPLIED").length})` },
+              { id: "under_review", label: `Under Review (${applications.filter((a) => (a.status || "").toUpperCase() === "UNDER_REVIEW").length})` },
+              { id: "shortlisted", label: `Shortlisted (${applications.filter((a) => (a.status || "").toUpperCase() === "SHORTLISTED").length})` },
+              { id: "selected", label: `Selected (${applications.filter((a) => (a.status || "").toUpperCase() === "SELECTED").length})` },
+              { id: "rejected", label: `Rejected (${applications.filter((a) => (a.status || "").toUpperCase() === "REJECTED").length})` },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setStatusFilter(tab.id)}
+                style={{
+                  padding: "5px 12px",
+                  borderRadius: "var(--radius-full)",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  backgroundColor: statusFilter === tab.id ? "rgba(99, 102, 241, 0.15)" : "transparent",
+                  color: statusFilter === tab.id ? "#818CF8" : "var(--text-secondary)",
+                  border: statusFilter === tab.id ? "1px solid rgba(99, 102, 241, 0.3)" : "1px solid transparent",
+                  cursor: "pointer",
+                }}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Score Threshold Filter */}
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <SlidersHorizontal size={16} color="var(--text-muted)" />
+            <span style={{ fontSize: "13px", color: "var(--text-secondary)", fontWeight: 500 }}>
+              Min Score: <strong style={{ color: "var(--text-primary)" }}>{minScoreFilter}%</strong>
+            </span>
+            <input
+              type="range"
+              min="0"
+              max="90"
+              step="10"
+              value={minScoreFilter}
+              onChange={(e) => setMinScoreFilter(Number(e.target.value))}
+              style={{ width: "100px", accentColor: "var(--accent-primary)", cursor: "pointer", margin: 0 }}
+            />
+          </div>
+        </div>
+      </Card>
+
+      {/* Ranked Candidate List */}
+      {filteredApps.length > 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          {filteredApps.map((app, idx) => {
+            const isSelected = selectedForCompare.includes(app.id);
+            const score = Math.round(app.match?.overall_match_score || 0);
+            const candidateName = app.company_name || `Candidate #${idx + 1}`;
+
+            return (
+              <Card
+                key={app.id}
+                elevated={isSelected}
+                style={{
+                  border: isSelected ? "1px solid var(--accent-primary)" : "1px solid var(--border-default)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  gap: "16px",
+                  padding: "16px 20px",
+                }}
+              >
+                {/* Left: Checkbox + Rank Badge + Name */}
+                <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleCandidateSelection(app.id)}
+                    style={{ width: "18px", height: "18px", accentColor: "var(--accent-primary)", cursor: "pointer" }}
+                    title="Select to compare"
+                  />
+
+                  <span
+                    style={{
+                      width: "28px",
+                      height: "28px",
+                      borderRadius: "50%",
+                      backgroundColor: idx === 0 ? "rgba(245, 158, 11, 0.2)" : "var(--bg-input)",
+                      color: idx === 0 ? "#FBBF24" : "var(--text-muted)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "13px",
+                      fontWeight: 700,
+                    }}
+                  >
+                    #{idx + 1}
+                  </span>
+
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <h4 style={{ fontSize: "15px", fontWeight: 700, color: "var(--text-primary)", margin: 0 }}>
+                        {candidateName}
+                      </h4>
+                      <StatusBadge status={app.status} size="sm" />
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "6px" }}>
+                      {app.match?.matched_skills?.slice(0, 3).map((s, sIdx) => (
+                        <SkillChip key={sIdx} skill={s} type="matched" size="sm" />
+                      ))}
+                      {(app.match?.matched_skills?.length || 0) > 3 && (
+                        <span style={{ fontSize: "11px", color: "var(--text-muted)", alignSelf: "center" }}>
+                          +{(app.match?.matched_skills?.length || 0) - 3} more
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right: Score Ring + Actions */}
+                <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                  <ProgressRing score={score} size={60} strokeWidth={6} />
+
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={Eye}
+                      onClick={() => setInspectApp(app)}
+                    >
+                      View Report
+                    </Button>
+
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      icon={Sparkles}
+                      disabled={app.status === "SHORTLISTED"}
+                      onClick={() => updateStatus(app.id, "SHORTLISTED")}
+                    >
+                      Shortlist
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
         </div>
       ) : (
-        <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "1.5rem", textAlign: "left" }}>
-          <thead>
-            <tr style={{ borderBottom: "2px solid var(--color-border)" }}>
-              <th style={{ padding: "1rem 0" }}>Candidate</th>
-              <th style={{ padding: "1rem 0" }}>ATS Score</th>
-              <th style={{ padding: "1rem 0" }}>Status</th>
-              <th style={{ padding: "1rem 0" }}>Applied On</th>
-              <th style={{ padding: "1rem 0" }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {applications.map((app) => {
-              const scoreColor = app.match.overall_match_score >= 80 ? "var(--color-success)" : app.match.overall_match_score >= 60 ? "var(--color-warning)" : "var(--color-danger)";
-              
-              return (
-                <tr key={app.id} style={{ borderBottom: "1px solid var(--color-border)" }}>
-                  <td style={{ padding: "1rem 0", fontWeight: "bold" }}>{app.company_name /* Hack for candidate name */}</td>
-                  <td style={{ padding: "1rem 0", color: scoreColor, fontWeight: "bold" }}>{app.match.overall_match_score}%</td>
-                  <td style={{ padding: "1rem 0" }}>
-                    <span className="badge" style={{ background: "var(--color-primary-light)", color: "var(--color-primary)" }}>
-                      {app.status}
-                    </span>
-                  </td>
-                  <td style={{ padding: "1rem 0", color: "var(--color-text-secondary)" }}>
-                    {new Date(app.created_at).toLocaleDateString()}
-                  </td>
-                  <td style={{ padding: "1rem 0", textAlign: "right" }}>
-                    <button className="secondary-button" onClick={() => setSelectedApp(app)}>Review Details</button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <EmptyState
+          title="No Candidates Found"
+          description={
+            applications.length === 0
+              ? "No candidate applications have been submitted for this position yet."
+              : "No candidates match your active status or score filters."
+          }
+          actionText={applications.length > 0 ? "Reset Filters" : undefined}
+          onAction={() => {
+            setStatusFilter("all");
+            setMinScoreFilter(0);
+          }}
+        />
+      )}
+
+      {/* Candidate Evaluation Modal */}
+      {inspectApp && (
+        <CandidateEvaluationModal
+          application={inspectApp}
+          onClose={() => setInspectApp(null)}
+          onUpdateStatus={updateStatus}
+        />
+      )}
+
+      {/* Candidate Comparison Modal */}
+      {compareData && (
+        <CandidateCompareModal
+          data={compareData}
+          onClose={() => setCompareData(null)}
+          onUpdateStatus={updateStatus}
+        />
       )}
     </div>
   );
-}
+};

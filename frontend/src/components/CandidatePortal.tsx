@@ -78,6 +78,18 @@ export function CandidatePortal() {
     );
   }
 
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredJobs = jobs.filter((job) => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return true;
+    const titleMatch = job.title.toLowerCase().includes(q);
+    const companyMatch = (job.company_name || "").toLowerCase().includes(q);
+    const locationMatch = (job.location || "").toLowerCase().includes(q);
+    const skillMatch = (job.required_skills || []).some(s => s.toLowerCase().includes(q));
+    return titleMatch || companyMatch || locationMatch || skillMatch;
+  });
+
   return (
     <div className="layout-row">
       <div className="sidebar">
@@ -101,18 +113,38 @@ export function CandidatePortal() {
       <div className="main-content">
         {activeTab === "browse" ? (
           <div className="panel">
-            <h2>Available Jobs</h2>
-            <p className="intro">Find your next role. Our AI matches your resume directly to these requirements.</p>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
+              <div>
+                <h2>Available Jobs</h2>
+                <p className="intro">Find your next role. Our AI matches your resume directly to these requirements.</p>
+              </div>
+            </div>
+
+            {/* Search and filter input */}
+            <div style={{ marginTop: "1.5rem", marginBottom: "1.5rem" }}>
+              <input
+                type="text"
+                placeholder="🔍 Search by job title, company, skill (e.g. Python), or location..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{ width: "100%", padding: "0.75rem 1rem", fontSize: "0.95rem" }}
+              />
+            </div>
             
             {isLoading ? (
               <p>Loading jobs...</p>
-            ) : jobs.length === 0 ? (
+            ) : filteredJobs.length === 0 ? (
               <div className="empty-state">
-                <p>No jobs available right now.</p>
+                <p>{jobs.length === 0 ? "No jobs available right now." : "No jobs match your search criteria."}</p>
+                {searchQuery && (
+                  <button className="secondary-button" onClick={() => setSearchQuery("")} style={{ marginTop: "0.75rem" }}>
+                    Clear Search
+                  </button>
+                )}
               </div>
             ) : (
-              <div className="job-list" style={{ display: "flex", flexDirection: "column", gap: "1.5rem", marginTop: "2rem" }}>
-                {jobs.map((job) => (
+              <div className="job-list" style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+                {filteredJobs.map((job) => (
                   <div key={job.id} className="card">
                     <h3 style={{ marginBottom: "0.25rem" }}>{job.title}</h3>
                     <p className="eyebrow" style={{ fontSize: "0.875rem", marginBottom: "1rem" }}>{job.company_name}</p>
@@ -120,6 +152,7 @@ export function CandidatePortal() {
                     <div style={{ display: "flex", gap: "1rem", color: "var(--color-text-secondary)", fontSize: "0.875rem", marginBottom: "1rem" }}>
                       <span>📍 {job.location || "Remote"}</span>
                       <span>💼 {job.experience_required || "Not specified"}</span>
+                      <span>⏱️ {job.employment_type || "Full-time"}</span>
                     </div>
 
                     <div style={{ marginBottom: "1.5rem" }}>

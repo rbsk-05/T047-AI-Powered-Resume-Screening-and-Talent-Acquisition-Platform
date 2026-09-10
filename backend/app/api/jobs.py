@@ -2,16 +2,16 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.jd_agent import JDAgent
 from app.api.deps import require_recruiter
 from app.db.session import get_db
 from app.models.job import Job
 from app.models.user import User
 from app.schemas.job import JobCreateRequest, JobDescriptionAnalysisRequest, JobProfile
 from app.schemas.records import StoredJob
-from app.services.job_analyzer import JobDescriptionAnalyzer
 
 router = APIRouter(prefix="/jobs", tags=["job descriptions"])
-analyzer = JobDescriptionAnalyzer()
+jd_agent = JDAgent()
 
 
 def _job_to_stored(job: Job) -> StoredJob:
@@ -37,10 +37,12 @@ def _job_to_stored(job: Job) -> StoredJob:
 @router.post("/analyze", response_model=JobProfile)
 def analyze_job_description(payload: JobDescriptionAnalysisRequest) -> JobProfile:
     """Convert an unstructured job description into a structured job profile."""
-    return analyzer.analyze(payload)
+    return jd_agent.process(payload.job_title, payload.job_description)
 
 
 @router.post("", response_model=StoredJob, status_code=201)
+
+
 def create_job(
     payload: JobCreateRequest,
     db: Session = Depends(get_db),
@@ -51,7 +53,7 @@ def create_job(
     The AI JD agent runs first to build a structured profile. Manually entered
     skills / education are merged with AI-extracted values so neither is lost.
     """
-    profile = analyzer.analyze(payload)
+    profile = jd_agent.process(payload.job_title, payload.job_description)
 
     # Merge manual skills with AI-extracted (manual entries take priority, AI fills gaps)
     merged_required = list(dict.fromkeys(payload.required_skills + profile.required_skills)) if payload.required_skills else profile.required_skills

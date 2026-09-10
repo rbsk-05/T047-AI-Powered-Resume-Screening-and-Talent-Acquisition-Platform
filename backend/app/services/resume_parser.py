@@ -1,27 +1,16 @@
 import io
-import re
 
 import fitz
 from docx import Document
 
 from app.schemas.candidate import CandidateProfile
-
-
 from app.services.llm_provider import LLMProvider, get_llm_provider
 
 
 class ResumeParser:
-    """Extract text and structured candidate profile from a resume using AI + regex fallback."""
+    """Extract candidate profile from resume text using AI Agent (LLM)."""
 
-    ALLOWED_SUFFIXES = {".pdf", ".docx"}
-    SKILLS = (
-        "Python", "Java", "JavaScript", "TypeScript", "C#", "C++", "SQL",
-        "React", "Angular", "Vue", "Node.js", "FastAPI", "Django", "Flask",
-        "Spring Boot", "AWS", "Azure", "GCP", "Docker", "Kubernetes",
-        "PostgreSQL", "MySQL", "MongoDB", "Redis", "Git", "REST API",
-        "GraphQL", "CI/CD", "Linux", "TensorFlow", "PyTorch", "spaCy",
-    )
-    SECTION_TITLES = ("projects", "project experience", "certifications", "education", "experience", "skills")
+    ALLOWED_SUFFIXES = {".pdf", ".docx", ".txt"}
 
     def __init__(self, llm_provider: LLMProvider | None = None) -> None:
         self.llm_provider = llm_provider or get_llm_provider()
@@ -31,127 +20,147 @@ class ResumeParser:
         return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
     def extract_text(self, filename: str, content: bytes) -> str:
+        """Extract raw text from PDF, DOCX, or text file with resilient fallback."""
+        if not content:
+            raise ValueError("The uploaded resume file is empty.")
+
         suffix = filename.lower().rsplit(".", maxsplit=1)
         suffix = f".{suffix[-1]}" if len(suffix) == 2 else ""
-        if suffix not in self.ALLOWED_SUFFIXES:
-            raise ValueError("Only PDF and DOCX resume files are supported.")
 
         if suffix == ".pdf":
-            document = fitz.open(stream=content, filetype="pdf")
             try:
-                return "\n".join(page.get_text() for page in document)
-            finally:
-                document.close()
+                document = fitz.open(stream=content, filetype="pdf")
+                try:
+                    text = "\n".join(page.get_text() for page in document)
+                    if text.strip():
+                        return text
+                finally:
+                    document.close()
+            except Exception:
+                pass
 
-        document = Document(io.BytesIO(content))
-        return "\n".join(paragraph.text for paragraph in document.paragraphs)
+        if suffix == ".docx":
+            try:
+                document = Document(io.BytesIO(content))
+                text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+                if text.strip():
+                    return text
+            except Exception:
+                pass
 
-    @staticmethod
-    def _clean_lines(text: str) -> list[str]:
-        return [re.sub(r"\s+", " ", line).strip() for line in text.splitlines() if line.strip()]
+        # Text file or resilient byte decoding fallback
+        for encoding in ("utf-8", "latin-1", "cp1252"):
+            try:
+                decoded = content.decode(encoding)
+                if decoded.strip():
+                    return decoded
+            except UnicodeDecodeError:
+                continue
 
-    def _skills(self, text: str) -> list[str]:
-        return [skill for skill in self.SKILLS if re.search(rf"(?<!\w){re.escape(skill)}(?!\w)", text, re.IGNORECASE)]
-
-    @staticmethod
-    def _first_section(lines: list[str], heading: str) -> list[str]:
-        for index, line in enumerate(lines):
-            if line.lower().strip(":") == heading:
-                section: list[str] = []
-                for candidate in lines[index + 1:]:
-                    if candidate.lower().strip(":") in ResumeParser.SECTION_TITLES:
-                        break
-                    section.append(candidate)
-                return section[:6]
-        return []
-
-    @staticmethod
-    def _name(lines: list[str]) -> str | None:
-        if not lines:
-            return None
-        first_line = lines[0]
-        return first_line if re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,80}", first_line) else None
-
-    @staticmethod
-    def _email(text: str) -> str | None:
-        match = re.search(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", text)
-        return match.group(0) if match else None
-
-    @staticmethod
-    def _phone(text: str) -> str | None:
-        match = re.search(r"(?<!\d)(?:\+?\d{1,3}[ -]?)?(?:\(?\d{2,4}\)?[ -]?)?\d{3,5}[ -]\d{4,6}(?!\d)", text)
-        return match.group(0) if match else None
-
-    @staticmethod
-    def _experience(text: str) -> str | None:
-        match = re.search(r"\b(\d+(?:\.\d+)?\+?)\s*(?:years?|yrs?)\s+(?:of\s+)?experience", text, re.IGNORECASE)
-        return f"{match.group(1)} years" if match else None
-
-    RESUME_SECTION_PATTERNS = [
-        r"\b(?:skills|technical skills|technologies|core competencies|areas of expertise|tech stack|tools)\b",
-        r"\b(?:experience|work experience|employment history|professional experience|career history|work history)\b",
-        r"\b(?:education|academic background|qualifications|academic history|degrees|university|college|school)\b",
-        r"\b(?:projects|key projects|academic projects|personal projects|technical projects)\b",
-        r"\b(?:certifications|certificates|licenses|achievements|awards|summary|professional summary|profile|objective)\b",
-    ]
-
-    def validate_resume_structure(self, text: str) -> bool:
-        """Verify that the document contains standard resume sections and structure."""
-        if not text or len(text.strip()) < 40:
-            return False
-        
-        matches = sum(1 for pattern in self.RESUME_SECTION_PATTERNS if re.search(pattern, text, re.IGNORECASE))
-        has_contact = bool(self._email(text) or self._phone(text))
-        has_skills = bool(self._skills(text))
-        
-        # Valid resume requires either multiple recognized sections OR contact info + at least 1 section/skill
-        return (matches >= 2) or (has_contact and (matches >= 1 or has_skills))
+        raise ValueError("Could not extract readable text from the uploaded document. Please check the file format.")
 
     def parse_text(self, text: str) -> CandidateProfile:
-        if not self.validate_resume_structure(text):
-            raise ValueError(
-                "The uploaded document does not appear to be a valid resume. "
-                "Please make sure your file contains standard resume sections such as Skills, Experience, Education, or Projects."
+        """Parse resume text using AI Agent and Skill Ontology."""
+        if not text or len(text.strip()) < 10:
+            raise ValueError("The uploaded document is empty or unreadable.")
+
+        from app.schemas.candidate import CandidateSkill, CandidateSkillEvidence
+        from app.services.skill_ontology import get_skill_ontology
+
+        ontology = get_skill_ontology()
+
+        # Delegate parsing directly to AI Agent
+        extracted = self.llm_provider.extract_candidate_profile(text)
+        if extracted:
+            raw_skills = extracted.get("skills") if self._is_list_of_str(extracted.get("skills")) else []
+            norm_skills: list[str] = []
+            structured_skills: list[CandidateSkill] = []
+
+            for s in raw_skills:
+                canonical, _ = ontology.normalize_skill(s)
+                c_name = canonical if canonical else s
+                if c_name not in norm_skills:
+                    norm_skills.append(c_name)
+
+            raw_struct = extracted.get("structured_skills")
+            if isinstance(raw_struct, list):
+                for item in raw_struct:
+                    if isinstance(item, dict) and item.get("skill_name"):
+                        s_name = str(item.get("skill_name"))
+                        canonical, _ = ontology.normalize_skill(s_name)
+                        structured_skills.append(
+                            CandidateSkill(
+                                skill_name=s_name,
+                                normalized_name=canonical if canonical else s_name,
+                                evidence_text=str(item.get("evidence_text", "")),
+                                evidence_type=CandidateSkillEvidence.EXPLICIT if str(item.get("evidence_type", "")).upper() == "EXPLICIT" else CandidateSkillEvidence.INFERRED,
+                                confidence=str(item.get("confidence", "HIGH")),
+                            )
+                        )
+
+            # Fallback structured skills if LLM didn't return structured_skills list
+            if not structured_skills and norm_skills:
+                for s in norm_skills:
+                    structured_skills.append(
+                        CandidateSkill(
+                            skill_name=s,
+                            normalized_name=s,
+                            evidence_text=f"Demonstrated in resume: {s}",
+                            evidence_type=CandidateSkillEvidence.EXPLICIT,
+                            confidence="HIGH",
+                        )
+                    )
+
+            return CandidateProfile(
+                name=extracted.get("name") if isinstance(extracted.get("name"), str) else None,
+                role=extracted.get("role") if isinstance(extracted.get("role"), str) else None,
+                email=extracted.get("email") if isinstance(extracted.get("email"), str) else None,
+                phone=extracted.get("phone") if isinstance(extracted.get("phone"), str) else None,
+                skills=norm_skills,
+                structured_skills=structured_skills,
+                experience=extracted.get("experience") if isinstance(extracted.get("experience"), str) else None,
+                education=extracted.get("education") if self._is_list_of_str(extracted.get("education")) else [],
+                projects=extracted.get("projects") if self._is_list_of_str(extracted.get("projects")) else [],
+                certifications=extracted.get("certifications") if self._is_list_of_str(extracted.get("certifications")) else [],
+                domain_knowledge=extracted.get("domain_knowledge") if self._is_list_of_str(extracted.get("domain_knowledge")) else [],
             )
 
-        lines = self._clean_lines(text)
-        education_terms = ("B.E", "B.Tech", "B.Sc", "M.Sc", "M.E", "M.Tech", "Bachelor", "Master", "Computer Science", "Information Technology")
-        education = [line for line in lines if any(term.lower() in line.lower() for term in education_terms)][:5]
-        
-        baseline = CandidateProfile(
-            name=self._name(lines),
-            email=self._email(text),
-            phone=self._phone(text),
-            skills=self._skills(text),
-            experience=self._experience(text),
-            education=education,
-            projects=self._first_section(lines, "projects") or self._first_section(lines, "project experience"),
-            certifications=self._first_section(lines, "certifications"),
-        )
+        # Fallback for offline/test environments without active API connection
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        email = None
+        skills = []
+        for line in lines:
+            if "@" in line and "." in line and not email:
+                for token in line.split():
+                    if "@" in token and "." in token:
+                        email = token.strip("<>(),;:")
+            lower = line.lower()
+            if any(k in lower for k in ["skills:", "technical skills:", "technologies:", "tools:"]):
+                parts = line.split(":", 1)[1] if ":" in line else line
+                for s in parts.replace("•", ",").replace("|", ",").split(","):
+                    item = s.strip()
+                    if item and len(item) < 30:
+                        canonical, _ = ontology.normalize_skill(item)
+                        skills.append(canonical if canonical else item)
 
-        if not self.llm_provider.available:
-            return baseline
-
-        extracted = self.llm_provider.extract_candidate_profile(text)
-        if not extracted:
-            return baseline
-
-        # Merge extracted AI profile with baseline fallback
-        llm_skills = extracted.get("skills") if self._is_list_of_str(extracted.get("skills")) else baseline.skills
-        # Deduplicate and combine skills
-        combined_skills = list(dict.fromkeys(llm_skills + baseline.skills))
+        struct_fallback = [
+            CandidateSkill(skill_name=s, normalized_name=s, evidence_text=s, evidence_type=CandidateSkillEvidence.EXPLICIT, confidence="HIGH")
+            for s in skills
+        ]
 
         return CandidateProfile(
-            name=extracted.get("name") if isinstance(extracted.get("name"), str) and extracted.get("name") else baseline.name,
-            email=extracted.get("email") if isinstance(extracted.get("email"), str) and extracted.get("email") else baseline.email,
-            phone=extracted.get("phone") if isinstance(extracted.get("phone"), str) and extracted.get("phone") else baseline.phone,
-            skills=combined_skills,
-            experience=extracted.get("experience") if isinstance(extracted.get("experience"), str) and extracted.get("experience") else baseline.experience,
-            education=extracted.get("education") if self._is_list_of_str(extracted.get("education")) and extracted.get("education") else baseline.education,
-            projects=extracted.get("projects") if self._is_list_of_str(extracted.get("projects")) and extracted.get("projects") else baseline.projects,
-            certifications=extracted.get("certifications") if self._is_list_of_str(extracted.get("certifications")) and extracted.get("certifications") else baseline.certifications,
+            name=lines[0] if lines else None,
+            email=email,
+            skills=skills,
+            structured_skills=struct_fallback,
+            education=[],
+            projects=[],
+            certifications=[],
+            domain_knowledge=[],
         )
 
     def parse(self, filename: str, content: bytes) -> CandidateProfile:
         return self.parse_text(self.extract_text(filename, content))
+
+
 

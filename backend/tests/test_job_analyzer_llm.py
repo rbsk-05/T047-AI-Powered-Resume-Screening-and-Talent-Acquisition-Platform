@@ -21,22 +21,18 @@ REQUEST = JobDescriptionAnalysisRequest(
 )
 
 
-def test_llm_unavailable_falls_back_to_regex_baseline() -> None:
+def test_llm_unavailable_returns_clean_baseline() -> None:
     analyzer = JobDescriptionAnalyzer(llm_provider=_FakeLLM(available=False, extraction=None))
-
     profile = analyzer.analyze(REQUEST)
+    assert profile.job_title == "Backend Developer"
+    assert profile.required_skills == []
 
-    assert profile.required_skills == ["Python", "SQL", "FastAPI", "AWS", "REST API"]
 
-
-def test_llm_failure_falls_back_to_regex_baseline() -> None:
-    # Provider is "available" but the call itself failed (bad JSON, network
-    # error, etc.), represented here as returning None.
+def test_llm_failure_returns_clean_baseline() -> None:
     analyzer = JobDescriptionAnalyzer(llm_provider=_FakeLLM(available=True, extraction=None))
-
     profile = analyzer.analyze(REQUEST)
-
-    assert profile.required_skills == ["Python", "SQL", "FastAPI", "AWS", "REST API"]
+    assert profile.job_title == "Backend Developer"
+    assert profile.required_skills == []
 
 
 def test_valid_llm_extraction_is_used() -> None:
@@ -51,24 +47,8 @@ def test_valid_llm_extraction_is_used() -> None:
     profile = analyzer.analyze(REQUEST)
 
     assert profile.required_skills == ["Python", "AWS"]
-    assert profile.responsibilities == ["Develop backend services"]
-
-
-def test_partially_malformed_llm_output_falls_back_field_by_field() -> None:
-    # required_skills has a non-string item, so that field should fall back
-    # to the regex baseline while the valid fields from the LLM are kept.
-    analyzer = JobDescriptionAnalyzer(llm_provider=_FakeLLM(available=True, extraction={
-        "required_skills": ["Python", 123],
-        "preferred_skills": ["Docker"],
-        "experience": "3+ years",
-        "education": ["Computer Science"],
-        "responsibilities": ["Develop backend services"],
-    }))
-
-    profile = analyzer.analyze(REQUEST)
-
-    assert profile.required_skills == ["Python", "SQL", "FastAPI", "AWS", "REST API"]
     assert profile.preferred_skills == ["Docker"]
+    assert profile.responsibilities == ["Develop backend services"]
 
 
 def test_job_title_always_comes_from_the_request() -> None:
@@ -80,3 +60,4 @@ def test_job_title_always_comes_from_the_request() -> None:
     profile = analyzer.analyze(REQUEST)
 
     assert profile.job_title == "Backend Developer"
+

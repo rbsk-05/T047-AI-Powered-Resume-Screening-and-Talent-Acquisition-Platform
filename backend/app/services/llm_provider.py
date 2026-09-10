@@ -37,7 +37,7 @@ class LLMProvider:
             self._client = Groq(api_key=self.api_key)
         return self._client
 
-    def _complete(self, prompt: str, max_tokens: int = 1000) -> str | None:
+    def _complete(self, prompt: str, max_tokens: int = 4000) -> str | None:
         if not self.available:
             return None
         try:
@@ -52,67 +52,163 @@ class LLMProvider:
             return None
 
 
-    def extract_job_requirements(self, job_title: str, job_description: str) -> dict | None:
-        """Ask the LLM to extract structured requirements from a JD.
-
-        Returns a dict with the same keys as JobProfile (minus job_title) on
-        success, or None if the call failed or the response wasn't valid
-        JSON -- the caller should fall back to the regex baseline.
-        """
-        prompt = f"""Extract structured hiring requirements from this job description.
-
-Job title: {job_title}
-Job description:
-{job_description}
-
-Respond with ONLY a JSON object (no prose, no markdown fences) with exactly these keys:
-- "required_skills": list of strings, must-have technical skills
-- "preferred_skills": list of strings, nice-to-have skills
-- "experience": string or null, e.g. "3+ years"
-- "education": list of strings, e.g. ["Computer Science"]
-- "responsibilities": list of strings, up to 6 short responsibility statements
-"""
-        raw = self._complete(prompt)
-        if raw is None:
+    @staticmethod
+    def _extract_json(raw: str | None) -> dict | list | None:
+        if not raw:
             return None
+        text = raw.strip()
         try:
-            data = json.loads(raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```"))
+            return json.loads(text)
         except json.JSONDecodeError:
+            pass
+
+        # Strip code fences
+        if "```" in text:
+            start_idx = text.find("```")
+            end_idx = text.rfind("```")
+            if end_idx > start_idx:
+                block = text[start_idx:end_idx].strip()
+                if "\n" in block:
+                    block = block.split("\n", 1)[1]
+                try:
+                    return json.loads(block.strip())
+                except json.JSONDecodeError:
+                    pass
+
+        # Substring search for outermost object { ... } or list [ ... ]
+        first_brace = text.find("{")
+        last_brace = text.rfind("}")
+        if first_brace != -1 and last_brace > first_brace:
+            candidate_json = text[first_brace:last_brace + 1]
+            try:
+                return json.loads(candidate_json)
+            except json.JSONDecodeError:
+                # Remove trailing commas before } or ]
+                cleaned_json = candidate_json.replace(",\n}", "\n}").replace(",}", "}").replace(",\n]", "\n]").replace(",]", "]")
+                try:
+                    return json.loads(cleaned_json)
+                except json.JSONDecodeError:
+                    pass
+
+        first_sq = text.find("[")
+        last_sq = text.rfind("]")
+        if first_sq != -1 and last_sq > first_sq:
+            try:
+                return json.loads(text[first_sq:last_sq + 1])
+            except json.JSONDecodeError:
+                pass
+
+        return None
+
+    def extract_job_requirements(self, job_title: str, job_description: str) -> dict | None:
+        """Ask the LLM to extract structured requirements from a JD with context awareness and zero-hallucination."""
+        clean_desc = (
+            job_description.replace("\u2011", "-")
+            .replace("\u2013", "-")
+            .replace("\u2014", "-")
+            .replace("\u2022", "*")
+        )
+        title_hint = f"Role/Title context: {job_title}\n" if job_title and job_title != "Job Role" else ""
+        prompt = f"""You are an expert technical recruiter and talent acquisition AI agent.
+Analyze the following job description text (which may be written in paragraphs, prose, bullet points, or freeform text) and extract the exact structured hiring requirements.
+
+{title_hint}Job Description Content:
+\"\"\"
+{clean_desc}
+\"\"\"
+
+CRITICAL EXTRACTION RULES:
+1. EXPLICIT vs INFERRED REQUIREMENTS:
+   - If a technology/skill is explicitly named (e.g. "React", "TypeScript", "C#", "SQL Server"), mark evidence_type as "EXPLICIT".
+   - If the JD describes generic responsibilities (e.g. "develop responsive web applications", "design microservices") without naming specific tools, mark the domain requirement as "INFERRED".
+   - NEVER invent or assume mandatory technologies that are not stated in the JD. For example, if JD says "develop responsive web applications", do NOT invent React or Angular!
+2. TECHNOLOGY SPECIFICATION:
+   - If specific programming languages/frameworks are explicitly required, set "technology_specified": true.
+   - If only general responsibilities are given without naming specific technologies, set "technology_specified": false.
+3. REQUIRED vs PREFERRED:
+   - "required_skills": Mandatory must-have technical skills, tools, languages, and competencies.
+   - "preferred_skills": Nice-to-have, bonus, or secondary skills explicitly mentioned as preferred.
+4. JOB FAMILY: Identify the primary role family (e.g. "Frontend Development", "Backend Development", "Full Stack Development", "Cloud & DevOps", "Data Science & AI", "UI/UX Design", "QA & Testing", "Mobile Development").
+
+Respond with ONLY a valid JSON object matching this structure:
+{{
+  "job_title": "string",
+  "job_family": "string",
+  "technology_specified": true,
+  "required_skills": ["string"],
+  "preferred_skills": ["string"],
+  "requirements": [
+    {{
+      "name": "string",
+      "category": "string",
+      "importance": "REQUIRED" or "PREFERRED",
+      "evidence_type": "EXPLICIT" or "INFERRED",
+      "evidence_text": "short quote from JD",
+      "confidence": "HIGH" or "MEDIUM" or "LOW"
+    }}
+  ],
+  "experience": "string or null (e.g. '3+ years')",
+  "education": ["string"],
+  "responsibilities": ["string (3-6 bullet points)"],
+  "soft_skills": ["string"],
+  "domain_knowledge": ["string"]
+}}
+"""
+        raw = self._complete(prompt, max_tokens=3500)
+        data = self._extract_json(raw)
+        if not isinstance(data, dict):
             return None
         expected_keys = {"required_skills", "preferred_skills", "experience", "education", "responsibilities"}
-        if not isinstance(data, dict) or not expected_keys.issubset(data.keys()):
+        if not expected_keys.issubset(data.keys()):
             return None
         return data
 
     def extract_candidate_profile(self, resume_text: str) -> dict | None:
-        """Ask the LLM to extract structured candidate profile from resume text."""
+        """Ask the LLM to extract structured candidate profile from resume text with evidence tracing."""
+        clean_text = (
+            resume_text.replace("\u2011", "-")
+            .replace("\u2013", "-")
+            .replace("\u2014", "-")
+            .replace("\u2022", "*")
+        )
         prompt = f"""Extract structured candidate information from this resume text.
-If the text does NOT look like a resume or CV, or has no relevant technical candidate information, return empty lists/null.
+CRITICAL INSTRUCTION FOR SKILLS:
+- Extract ONLY the skills and technologies explicitly supported by the resume text.
+- Do NOT assume a candidate knows a technology just because they know a related one (e.g., if candidate has React, do NOT invent Angular).
+- For each skill, identify the supporting evidence text from the resume.
 
 Resume Text:
-{resume_text[:4000]}
+{clean_text[:4500]}
 
-Respond with ONLY a JSON object (no prose, no markdown fences) with exactly these keys:
-- "name": string or null
+Respond with ONLY a JSON object with exactly these keys:
+- "name": string or null (Candidate full name)
+- "role": string or null (Target job title or primary profession stated in the resume)
 - "email": string or null
 - "phone": string or null
-- "skills": list of strings (e.g. ["Python", "FastAPI", "Docker", "SQL"])
-- "experience": string or null (e.g. "3 years", "2.5 years")
-- "education": list of strings (e.g. ["B.Tech in Computer Science"])
-- "projects": list of strings (e.g. ["Built an e-commerce platform using React and Node.js"])
-- "certifications": list of strings (e.g. ["AWS Certified Solutions Architect"])
+- "skills": list of strings (clean individual skill names, e.g. ["Python", "FastAPI", "SQL", "Docker"])
+- "structured_skills": [
+    {{
+      "skill_name": "string",
+      "evidence_text": "short snippet or quote demonstrating this skill",
+      "evidence_type": "EXPLICIT" or "INFERRED",
+      "confidence": "HIGH" or "MEDIUM"
+    }}
+  ]
+- "experience": string or null (e.g. "3 years", "Fresher / 1 year", or total years of experience)
+- "education": list of strings (e.g. ["B.E. in Computer Science - XYZ University"])
+- "projects": list of strings (key project titles from the resume)
+- "certifications": list of strings (certifications and licenses)
+- "domain_knowledge": list of strings
 """
-        raw = self._complete(prompt)
-        if raw is None:
+        raw = self._complete(prompt, max_tokens=4000)
+        data = self._extract_json(raw)
+        if not isinstance(data, dict):
             return None
-        try:
-            data = json.loads(raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```"))
-        except json.JSONDecodeError:
-            return None
-        expected_keys = {"name", "email", "phone", "skills", "experience", "education", "projects", "certifications"}
-        if not isinstance(data, dict) or not expected_keys.issubset(data.keys()):
+        expected_keys = {"name", "skills", "experience", "education"}
+        if not expected_keys.issubset(data.keys()):
             return None
         return data
+
 
     def generate_summary(
         self,
@@ -121,25 +217,43 @@ Respond with ONLY a JSON object (no prose, no markdown fences) with exactly thes
         matched_skills: list[str],
         missing_required_skills: list[str],
         missing_preferred_skills: list[str],
+        job_title: str | None = None,
+        experience: str | None = None,
+        recommendation: str | None = None,
     ) -> str | None:
-        """Ask the LLM to phrase a recruiter-facing summary of facts we already know.
+        """Ask the AI Evaluation Agent to phrase a rich, comprehensive evaluation summary.
 
-        The LLM only rephrases; it is given the computed score and skill
-        lists as ground truth rather than being asked to judge fit itself.
+        The LLM is provided the computed score and skill lists as ground truth.
         """
-        prompt = f"""Write a single, concise (2-3 sentence) recruiter-facing summary for a candidate,
-using ONLY the facts below. Do not invent skills, scores, or experience not listed here.
+        job_ctx = f"Target Role: {job_title}\n" if job_title else ""
+        exp_ctx = f"Experience: {experience}\n" if experience else ""
+        rec_ctx = f"Recommendation: {recommendation}\n" if recommendation else ""
 
-Candidate: {candidate_name}
-Overall match score: {overall_score}%
-Matched skills: {', '.join(matched_skills) or 'none'}
-Missing required skills: {', '.join(missing_required_skills) or 'none'}
-Missing preferred skills: {', '.join(missing_preferred_skills) or 'none'}
+        prompt = f"""You are the AI Evaluation Agent for an advanced talent acquisition platform.
+Generate a clear, professional, and comprehensive evaluation summary (3-4 complete sentences) for the candidate application below.
 
-Respond with ONLY the summary text, no preamble, no markdown.
+{job_ctx}Candidate: {candidate_name}
+Overall ATS Match Score: {overall_score}%
+{exp_ctx}{rec_ctx}Exact & Related Matched Skills: {', '.join(matched_skills) or 'None demonstrated'}
+Missing Required Skills: {', '.join(missing_required_skills) or 'None (All satisfied)'}
+Missing Preferred Skills: {', '.join(missing_preferred_skills) or 'None'}
+
+INSTRUCTIONS:
+1. State the candidate's overall ATS match score and role fit clearly.
+2. Highlight their verified skill matches and experience alignment where applicable.
+3. Identify the key technical gaps or required competencies they need to develop.
+4. Conclude with an objective hiring recommendation.
+5. Do NOT cut off mid-sentence. Write complete, well-formed, professional sentences.
+
+Respond with ONLY the evaluation summary text, no preamble, no markdown formatting.
 """
-        raw = self._complete(prompt, max_tokens=200)
-        return raw.strip() if raw else None
+        raw = self._complete(prompt, max_tokens=600)
+        if not raw:
+            return None
+        text = raw.strip()
+        if len(text) < 30 or text.endswith((" an", " a", " the", " with", " and", " for")):
+            return None
+        return text
 
     def analyze_skill_gap(
         self,
@@ -171,18 +285,33 @@ Respond with ONLY the feedback text, no preamble, no markdown.
         """
         prompt = f"""Suggest a concise, ordered learning path (3-5 milestones) for someone learning '{skill}' from scratch.
 Respond with ONLY a JSON array of short milestone strings, e.g. ["Step 1", "Step 2"].
-No prose, no markdown fences.
 """
         raw = self._complete(prompt, max_tokens=300)
-        if raw is None:
-            return None
-        try:
-            data = json.loads(raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```"))
-            if isinstance(data, list) and all(isinstance(s, str) for s in data):
-                return data
-        except json.JSONDecodeError:
-            pass
+        data = self._extract_json(raw)
+        if isinstance(data, list) and all(isinstance(s, str) for s in data):
+            return data
         return None
+
+    def generate_comparison_summary(
+        self,
+        job_title: str,
+        candidates_data: list[dict],
+    ) -> str | None:
+        """Ask the LLM to generate an objective, concise recruiter-facing comparison between candidates."""
+        candidates_text = ""
+        for c in candidates_data:
+            candidates_text += f"\n- {c['name']} (ATS Score: {c['score']}%): Matched: {', '.join(c['matched_skills']) or 'None'}, Missing: {', '.join(c['missing_skills']) or 'None'}, Experience: {c.get('experience', 'N/A')}"
+
+        prompt = f"""You are a technical recruitment advisor. Compare the following candidates for the '{job_title}' position.
+Provide a concise 3-4 sentence comparison summarizing their relative strengths and key differentiators.
+Do NOT invent facts, skills, or experience outside the data provided.
+
+Candidates:{candidates_text}
+
+Respond with ONLY the summary text, no preamble, no markdown.
+"""
+        raw = self._complete(prompt, max_tokens=300)
+        return raw.strip() if raw else None
 
 
 @lru_cache

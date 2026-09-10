@@ -2,16 +2,16 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.resume_agent import ResumeAgent
 from app.api.deps import get_current_user, require_candidate
 from app.db.session import get_db
 from app.models.candidate import Candidate
 from app.models.user import User
 from app.schemas.candidate import CandidateProfile
 from app.schemas.records import StoredCandidate
-from app.services.resume_parser import ResumeParser
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
-parser = ResumeParser()
+resume_agent = ResumeAgent()
 
 
 @router.post("/parse", response_model=CandidateProfile)
@@ -23,7 +23,7 @@ async def parse_resume(file: UploadFile = File(...)) -> CandidateProfile:
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Resume files must be 10 MB or smaller.")
     try:
-        return parser.parse(file.filename, content)
+        return resume_agent.process(file.filename, content)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -41,8 +41,8 @@ async def create_candidate(file: UploadFile = File(...), db: Session = Depends(g
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Resume files must be 10 MB or smaller.")
     try:
-        text = parser.extract_text(file.filename, content)
-        profile = parser.parse_text(text)
+        text = resume_agent.parser.extract_text(file.filename, content)
+        profile = resume_agent.process_text(text)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     candidate = Candidate(

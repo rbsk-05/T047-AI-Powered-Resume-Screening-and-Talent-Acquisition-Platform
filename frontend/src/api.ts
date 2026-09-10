@@ -18,8 +18,21 @@ export type AuthResponse = {
   user: User;
 };
 
+export type JobRequirement = {
+  name: string;
+  normalized_name: string;
+  category?: string | null;
+  importance: "REQUIRED" | "PREFERRED";
+  evidence_type: "EXPLICIT" | "INFERRED";
+  status: "KNOWN" | "NEEDS_VERIFICATION";
+  explanation: string;
+};
+
 export type JobProfile = {
   job_title: string;
+  job_family?: string | null;
+  technology_specified?: boolean;
+  requirements?: JobRequirement[];
   required_skills: string[];
   preferred_skills: string[];
   experience: string | null;
@@ -45,6 +58,7 @@ export type StoredJob = {
 
 export type CandidateProfile = {
   name: string | null;
+  role?: string | null;
   email: string | null;
   phone: string | null;
   skills: string[];
@@ -151,6 +165,8 @@ export function getJob(id: string): Promise<StoredJob> {
 
 // --- Resume upload and parsing (candidate) ---
 
+
+
 export function createCandidate(token: string, file: File): Promise<StoredCandidate> {
   const body = new FormData();
   body.append("file", file);
@@ -161,19 +177,45 @@ export function listCandidates(token: string): Promise<StoredCandidate[]> {
   return unwrap(fetch(`${API_URL}/resumes`, { headers: authHeaders(token) }));
 }
 
-// --- Applications (applying and reviewing) ---
+export type SkillMatchDetail = {
+  skill_name: string;
+  match_level: "EXACT" | "RELATED" | "MISSING";
+  matched_candidate_skill?: string | null;
+  relationship_type: string;
+  score_weight: number;
+  explanation: string;
+};
 
 export type MatchResult = {
   overall_match_score: number;
-  component_scores: {
+  score_breakdown?: {
+    required_skills: number;
+    experience: number;
+    education: number;
+    projects: number;
+    semantic_similarity: number;
+    certifications: number;
+  };
+  component_scores?: {
     skill_match: number;
     experience_match: number;
     education_match: number;
     semantic_similarity: number;
   };
   matched_skills: string[];
+  exact_matched_skills?: string[];
+  related_matched_skills?: string[];
   missing_required_skills: string[];
   missing_preferred_skills: string[];
+  match_details?: SkillMatchDetail[];
+  confidence_level?: string;
+  evidence_coverage_pct?: number;
+};
+
+export type EvidenceItem = {
+  requirement: string;
+  status: string;
+  evidence: string;
 };
 
 export type CandidateEvaluation = {
@@ -181,6 +223,39 @@ export type CandidateEvaluation = {
   recommendation: string;
   strengths: string[];
   gaps: string[];
+  evidence?: EvidenceItem[];
+};
+
+export function analyzeJobDescription(token: string, jobTitle: string, jobDescription: string): Promise<JobProfile> {
+  return unwrap(
+    fetch(`${API_URL}/jobs/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders(token) },
+      body: JSON.stringify({ job_title: jobTitle, job_description: jobDescription }),
+    })
+  );
+}
+
+export type SkillGap = {
+  skill: string;
+  priority: "critical" | "important" | "high" | "medium";
+  reason: string;
+};
+
+export type SkillGapResult = {
+  matched_skills: string[];
+  gaps: SkillGap[];
+};
+
+export type LearningRecommendation = {
+  skill: string;
+  priority: string;
+  reason: string;
+  learning_path: string[];
+};
+
+export type RecommendationResult = {
+  recommendations: LearningRecommendation[];
 };
 
 export type StoredApplication = {
@@ -193,6 +268,10 @@ export type StoredApplication = {
   created_at: string;
   job_title?: string;
   company_name?: string;
+  candidate_name?: string;
+  candidate_profile?: CandidateProfile | null;
+  skill_gap?: SkillGapResult | null;
+  recommendations?: RecommendationResult | null;
 };
 
 export function createApplication(token: string, job_id: string, candidate_id: string): Promise<StoredApplication> {
@@ -204,3 +283,39 @@ export function createApplication(token: string, job_id: string, candidate_id: s
     })
   );
 }
+
+export type SkillCoverageItem = {
+  skill: string;
+  is_required: boolean;
+  coverage: Record<string, boolean>;
+};
+
+export type CompareCandidateItem = {
+  id: string;
+  name: string;
+  overall_match_score: number;
+  experience: string | null;
+  education: string[];
+  status: string;
+  matched_skills: string[];
+  missing_skills: string[];
+  summary: string;
+};
+
+export type CompareResponse = {
+  job_title: string;
+  skills_matrix: SkillCoverageItem[];
+  candidates: CompareCandidateItem[];
+  comparison_summary: string;
+};
+
+export function compareApplications(token: string, applicationIds: string[]): Promise<CompareResponse> {
+  return unwrap(
+    fetch(`${API_URL}/applications/compare`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders(token) },
+      body: JSON.stringify({ application_ids: applicationIds }),
+    })
+  );
+}
+
